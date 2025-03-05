@@ -1,0 +1,240 @@
+# Motivational Quotes App Code
+
+## MainActivity.kt
+package com.example.motivationalquotes
+
+import android.content.SharedPreferences
+import android.os.Bundle
+import android.widget.ArrayAdapter
+import android.widget.Button
+import android.widget.Spinner
+import android.widget.TextView
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import com.google.android.material.switchmaterial.SwitchMaterial
+import android.content.Intent
+
+class MainActivity : AppCompatActivity() {
+    private lateinit var quoteText: TextView
+    private lateinit var notificationSwitch: SwitchMaterial
+    private lateinit var categorySpinner: Spinner
+    private lateinit var refreshQuoteButton: Button
+    private lateinit var shareQuoteButton: Button
+    private lateinit var sharedPreferences: SharedPreferences
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        // Initialize views
+        quoteText = findViewById(R.id.quoteText)
+        notificationSwitch = findViewById(R.id.notificationSwitch)
+        categorySpinner = findViewById(R.id.categorySpinner)
+        refreshQuoteButton = findViewById(R.id.refreshQuoteButton)
+        shareQuoteButton = findViewById(R.id.shareQuoteButton)
+
+        // Initialize SharedPreferences
+        sharedPreferences = getSharedPreferences("MotivationalQuotes", MODE_PRIVATE)
+        
+        // Set up category spinner
+        setupCategorySpinner()
+
+        // Set up notification switch
+        setupNotificationSwitch()
+
+        // Set up button click listeners
+        refreshQuoteButton.setOnClickListener {
+            displayRandomQuote()
+        }
+
+        shareQuoteButton.setOnClickListener {
+            val shareIntent = Intent().apply {
+                action = Intent.ACTION_SEND
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, quoteText.text)
+            }
+            startActivity(Intent.createChooser(shareIntent, "Share Quote"))
+        }
+
+        // Display a random quote
+        displayRandomQuote()
+    }
+
+    private fun setupCategorySpinner() {
+        // Create an ArrayAdapter using the enum values
+        val categories = QuoteProvider.QuoteCategory.values().map { 
+            it.name.replace('_', ' ').capitalize() 
+        }.toTypedArray()
+
+        ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_item,
+            categories
+        ).also { adapter ->
+            adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+            categorySpinner.adapter = adapter
+        }
+
+        // Set the saved category
+        val savedCategory = sharedPreferences.getString("selected_category", "MOTIVATIONAL")
+        val position = categories.indexOf(savedCategory?.capitalize())
+        if (position != -1) {
+            categorySpinner.setSelection(position)
+        }
+
+        // Listen for category changes
+        categorySpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                val selectedCategory = categories[position].uppercase()
+                sharedPreferences.edit().putString("selected_category", selectedCategory).apply()
+                displayRandomQuote()
+            }
+
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+    }
+
+    private fun setupNotificationSwitch() {
+        notificationSwitch.isChecked = sharedPreferences.getBoolean("notifications_enabled", true)
+        notificationSwitch.setOnCheckedChangeListener { _, isChecked ->
+            sharedPreferences.edit().putBoolean("notifications_enabled", isChecked).apply()
+            if (isChecked) {
+                Toast.makeText(this, "Notifications enabled", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this, "Notifications disabled", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun displayRandomQuote() {
+        val categoryName = sharedPreferences.getString("selected_category", "MOTIVATIONAL")
+        val category = QuoteProvider.QuoteCategory.valueOf(categoryName ?: "MOTIVATIONAL")
+        val quote = QuoteProvider.getRandomQuote(category)
+        quoteText.text = quote
+    }
+
+    private fun String.capitalize(): String {
+        return this.lowercase().replaceFirstChar { it.uppercase() }
+    }
+}
+
+## NotificationHelper.kt
+package com.example.motivationalquotes
+
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import android.util.Log
+
+object NotificationHelper {
+    private const val CHANNEL_ID = "motivational_quotes"
+    private const val NOTIFICATION_ID = 1
+
+    fun createNotificationChannel(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val name = "Motivational Quotes"
+            val descriptionText = "Shows motivational quotes when phone is unlocked"
+            val importance = NotificationManager.IMPORTANCE_DEFAULT
+            val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
+                description = descriptionText
+            }
+            
+            val notificationManager: NotificationManager =
+                context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.createNotificationChannel(channel)
+        }
+    }
+
+    fun showNotification(context: Context, quote: String) {
+        // Check if notifications are enabled
+        val sharedPreferences = context.getSharedPreferences("MotivationalQuotes", Context.MODE_PRIVATE)
+        if (!sharedPreferences.getBoolean("notifications_enabled", true)) {
+            return
+        }
+
+        // Create an intent that opens the MainActivity when the notification is tapped
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        val pendingIntent: PendingIntent = PendingIntent.getActivity(
+            context, 0, intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        // Build the notification
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("Your Daily Motivation")
+            .setContentText(quote)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(quote))
+
+        try {
+            with(NotificationManagerCompat.from(context)) {
+                notify(NOTIFICATION_ID, builder.build())
+                Log.d("NotificationHelper", "Notification sent successfully")
+            }
+        } catch (e: SecurityException) {
+            Log.e("NotificationHelper", "Notification permission not granted", e)
+        } catch (e: Exception) {
+            Log.e("NotificationHelper", "Failed to send notification", e)
+        }
+    }
+}
+
+## QuoteProvider.kt
+package com.example.motivationalquotes
+
+object QuoteProvider {
+    private val motivationalQuotes = listOf(
+        "The only way to do great work is to love what you do. - Steve Jobs",
+        "Success is not final, failure is not fatal: it is the courage to continue that counts. - Winston Churchill",
+        "Believe you can and you're halfway there. - Theodore Roosevelt",
+        "Everything you've ever wanted is on the other side of fear. - George Addair",
+        "The future belongs to those who believe in the beauty of their dreams. - Eleanor Roosevelt"
+    )
+
+    private val loveQuotes = listOf(
+        "The best thing to hold onto in life is each other. - Audrey Hepburn",
+        "Love is composed of a single soul inhabiting two bodies. - Aristotle",
+        "Where there is love there is life. - Mahatma Gandhi",
+        "The greatest happiness of life is the conviction that we are loved. - Victor Hugo",
+        "Love is not about possession. Love is about appreciation. - Osho"
+    )
+
+    private val successQuotes = listOf(
+        "Success usually comes to those who are too busy to be looking for it. - Henry David Thoreau",
+        "The road to success and the road to failure are almost exactly the same. - Colin R. Davis",
+        "Success is not the key to happiness. Happiness is the key to success. - Albert Schweitzer",
+        "Success is walking from failure to failure with no loss of enthusiasm. - Winston Churchill",
+        "The secret of success is to do the common thing uncommonly well. - John D. Rockefeller Jr."
+    )
+
+    private val happinessQuotes = listOf(
+        "Happiness is not something ready-made. It comes from your own actions. - Dalai Lama",
+        "The most important thing is to enjoy your life—to be happy. - Audrey Hepburn",
+        "Happiness is when what you think, what you say, and what you do are in harmony. - Mahatma Gandhi",
+        "The purpose of our lives is to be happy. - Dalai Lama",
+        "Happiness is not by chance, but by choice. - Jim Rohn"
+    )
+
+    private var lastQuoteIndex: Int = -1
+
+    enum class QuoteCategory {
+        MOTIVATIONAL, LOVE, SUCCESS, HAPPINESS
+    }
+
+    @Synchronized
+    fun getRandomQuote(category: QuoteCategory): String {
+        val quotes = when (category) {
+            QuoteCategory.MOTIVATIONAL -> motivationalQuotes
+            QuoteCategory.LOVE -> loveQuotes
+            QuoteCategory.SUCCESS -> successQuotes
+            QuoteCategory.HAPPINESS -> happinessQuotes
